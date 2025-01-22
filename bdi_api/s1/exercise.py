@@ -1,10 +1,15 @@
 import os
+import requests
 from typing import Annotated
-
-from fastapi import APIRouter, status
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
+import shutil
+import json
+from fastapi import APIRouter, status, HTTPException
 from fastapi.params import Query
 
 from bdi_api.settings import Settings
+from bs4 import BeautifulSoup
 
 settings = Settings()
 
@@ -17,92 +22,272 @@ s1 = APIRouter(
     tags=["s1"],
 )
 
-
 @s1.post("/aircraft/download")
 def download_data(
-    file_limit: Annotated[
-        int,
-        Query(
-            ...,
-            description="""
+        file_limit: Annotated[
+            int,
+            Query(
+                ..., 
+                description="""
     Limits the number of files to download.
     You must always start from the first the page returns and
     go in ascending order in order to correctly obtain the results.
     I'll test with increasing number of files starting from 100.""",
-        ),
-    ] = 100,
+            ),
+        ] = 100,
 ) -> str:
-    """Downloads the `file_limit` files AS IS inside the folder data/20231101
 
-    data: https://samples.adsbexchange.com/readsb-hist/2023/11/01/
-    documentation: https://www.adsbexchange.com/version-2-api-wip/
-        See "Trace File Fields" section
-
-    Think about the way you organize the information inside the folder
-    and the level of preprocessing you might need.
-
-    To manipulate the data use any library you feel comfortable with.
-    Just make sure to configure it in the `pyproject.toml` file
-    so it can be installed using `poetry update`.
-
-
-    TIP: always clean the download folder before writing again to avoid having old files.
-    """
     download_dir = os.path.join(settings.raw_dir, "day=20231101")
     base_url = settings.source_url + "/2023/11/01/"
-    # TODO Implement download
 
+    if file_limit < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="file_limit must be greater than 0",
+        )
+
+    os.makedirs(download_dir, exist_ok=True)
+    for filename in os.listdir(download_dir):
+        file_path = os.path.join(download_dir, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    try:
+        response = requests.get(base_url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        file_links = []
+        for file_row in soup.find_all("tr", class_="file"):
+            link = file_row.find("a", href=True)
+            if link:
+                file_links.append(link["href"])
+
+        if not file_links:
+            return "No files found to download."
+
+        def download_file(link):
+            file_url = f"{base_url}{link}"
+            local_file_path = os.path.join(download_dir, link)
+            try:
+                file_response = requests.get(file_url, stream=True)
+                file_response.raise_for_status()
+
+                with open(local_file_path, "wb") as file:
+                    for chunk in file_response.iter_content(chunk_size=1024):
+                        file.write(chunk)
+                print(f"Downloaded: {local_file_path}")
+            except Exception as e:
+                print(f"Failed to download {file_url}: {e}")
+
+        def execute_concurrent_downloads():
+            print("Starting concurrent downloads...")
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                executor.map(download_file, file_links[:file_limit])
+            print("All downloads completed.")
+
+        execute_concurrent_downloads()
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch or download files: {str(e)}"
+        )
     return "OK"
 
 
 @s1.post("/aircraft/prepare")
 def prepare_data() -> str:
-    """Prepare the data in the way you think it's better for the analysis.
+    download_dir = os.path.join(settings.raw_dir, "day=20231101")
+    output_dir = os.path.join(settings.raw_dir, "prepared_day=20231101")
 
-    * data: https://samples.adsbexchange.com/readsb-hist/2023/11/01/
-    * documentation: https://www.adsbexchange.com/version-2-api-wip/
-        See "Trace File Fields" section
+    # Inline clear_directory functionality
+    files_in_directory = []
+    if not os.path.exists(output_dir):
+        print(f"Directory {output_dir} does not exist.")
+    else:
+        files_in_directory = os.listdir(output_dir)
+        if files_in_directory:
+            for file_name in files_in_directory:
+                file_path = os.path.join(output_dir, file_name)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+        else:
+            print(f"No files found in {output_dir}.")
 
-    Think about the way you organize the information inside the folder
-    and the level of preprocessing you might need.
+    # Inline copy_and_rename_files functionality
+    os.makedirs(output_dir, exist_ok=True)
 
-    To manipulate the data use any library you feel comfortable with.
-    Just make sure to configure it in the `pyproject.toml` file
-    so it can be installed using `poetry update`.
+    for file_name in os.listdir(download_dir):
+        source_path = os.path.join(download_dir, file_name)
+        if os.path.isfile(source_path):
+            new_name = remove_gz_extension(file_name)
+            destination_path = os.path.join(output_dir, new_name)
 
-    TIP: always clean the prepared folder before writing again to avoid having old files.
+            shutil.copy(str(source_path), str(destination_path))
+            print(f"Copied and renamed: {source_path} -> {destination_path}")
 
-    Keep in mind that we are downloading a lot of small files, and some libraries might not work well with this!
-    """
-    # TODO
+    prep_data(output_dir)
+
     return "OK"
+
 
 
 @s1.get("/aircraft/")
 def list_aircraft(num_results: int = 100, page: int = 0) -> list[dict]:
-    """List all the available aircraft, its registration and type ordered by
-    icao asc
-    """
-    # TODO
-    return [{"icao": "0d8300", "registration": "YV3382", "type": "LJ31"}]
+
+    prepared_file = os.path.join(settings.raw_dir, "prepared_day=20231101/prepared.json")
+    if not os.path.exists(prepared_file):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prepared data file not found."
+        )
+    try:
+        # Load the data into a Pandas DataFrame
+        df = pd.read_json(prepared_file)
+        df = df[["icao", "registration", "type"]]
+        df = df.sort_values(by="icao", ascending=True)
+
+        start_index = page * num_results
+        end_index = start_index + num_results
+        paginated_data = df.iloc[start_index:end_index].to_dict(orient="records")
+        print(paginated_data)
+        return paginated_data
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list aircraft: {str(e)}"
+        )
 
 
 @s1.get("/aircraft/{icao}/positions")
 def get_aircraft_position(icao: str, num_results: int = 1000, page: int = 0) -> list[dict]:
-    """Returns all the known positions of an aircraft ordered by time (asc)
-    If an aircraft is not found, return an empty list.
-    """
-    # TODO implement and return a list with dictionaries with those values.
-    return [{"timestamp": 1609275898.6, "lat": 30.404617, "lon": -86.476566}]
+    prepared_file = os.path.join(settings.raw_dir, "prepared_day=20231101/prepared.json")
+    if not os.path.exists(prepared_file):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prepared data file not found."
+        )
+    try:
+        df = pd.read_json(prepared_file)
+        df = df[["icao","timestamp", "lat", "lon"]]
+        df_filtered = df[df["icao"] == icao]
 
+        if df_filtered.empty:
+            return []
+
+        df_filtered = df_filtered.sort_values(by="timestamp", ascending=True)
+
+        start_index = page * num_results
+        end_index = start_index + num_results
+        paginated_data = df_filtered.iloc[start_index:end_index].to_dict(orient="records")
+
+        return paginated_data
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve aircraft positions: {str(e)}"
+        )
 
 @s1.get("/aircraft/{icao}/stats")
 def get_aircraft_statistics(icao: str) -> dict:
-    """Returns different statistics about the aircraft
-
-    * max_altitude_baro
-    * max_ground_speed
-    * had_emergency
-    """
     # TODO Gather and return the correct statistics for the requested aircraft
-    return {"max_altitude_baro": 300000, "max_ground_speed": 493, "had_emergency": False}
+    prepared_file = os.path.join(settings.raw_dir, "prepared_day=20231101/prepared.json")
+    if not os.path.exists(prepared_file):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prepared data file not found."
+        )
+    try:
+        df = pd.read_json(prepared_file)
+        df_filtered = df[df["icao"] == icao]
+
+        if df_filtered.empty:
+            return {
+                "max_altitude_baro": None,
+                "max_ground_speed": None,
+                "had_emergency": None
+            }
+
+        max_altitude_baro = df_filtered["max_altitude_baro"].max()
+        max_ground_speed = df_filtered["max_ground_speed"].max()
+        had_emergency = bool((df_filtered["had_emergency"] == 1).any())
+
+        return {
+            "max_altitude_baro": max_altitude_baro,
+            "max_ground_speed": max_ground_speed,
+            "had_emergency": had_emergency,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve aircraft statistics: {str(e)}"
+        )
+    
+def remove_gz_extension(file_name):
+    if file_name.endswith(".gz"):
+        return file_name[:-3]
+    return file_name
+
+def copy_and_rename_files(source_dir, destination_dir):
+    os.makedirs(destination_dir, exist_ok=True)
+
+    for file_name in os.listdir(source_dir):
+        source_path = os.path.join(source_dir, file_name)
+        if os.path.isfile(source_path):
+            new_name = remove_gz_extension(file_name)
+            destination_path = os.path.join(destination_dir, new_name)
+
+            shutil.copy(str(source_path), str(destination_path))
+            print(f"Copied and renamed: {source_path} -> {destination_path}")
+
+
+def prep_data(directory, output_file="prepared.json", batch_size=100):
+    output_path = os.path.join(directory, output_file)
+    if os.path.exists(output_path):
+        os.remove(output_path)
+        print(f"Removed existing file: {output_path}")
+
+    all_aircraft_data = []
+
+    for file_name in os.listdir(directory):
+        if file_name.endswith(".json") and file_name != output_file:
+            file_path = os.path.join(directory, file_name)
+
+            try:
+                with open(file_path, "r") as file:
+                    data = json.load(file)
+
+                aircraft_data = data.get("aircraft", [])
+                aircraft_timestamp = data.get("now")
+                total_records = len(aircraft_data)
+
+                for i in range(0, total_records,batch_size):
+                    batch = aircraft_data[i:i+batch_size]
+
+                    for ac in batch:
+                        aircraft = {
+                            "icao": ac.get("hex"),
+                            "registration": ac.get("r"),
+                            "type": ac.get("t"),
+                            "lat" : ac.get("lat"),
+                            "lon" : ac.get("lon"),
+                            "max_altitude_baro" : ac.get("alt_baro"),
+                            "max_ground_speed" : ac.get("gs"),
+                            "had_emergency" : ac.get("emergency"),
+                            "timestamp" : aircraft_timestamp
+                        }
+                        all_aircraft_data.append(aircraft)
+
+                    print(f"Processed {len(batch)} records from {file_name}")
+                os.remove(file_path)
+
+            except Exception as e:
+                print(f"Error processing {file_name}: {e}")
+
+    with open(output_path, "w") as output_file:
+        json.dump(all_aircraft_data, output_file, indent=4)
+    print(f"Data saved to: {output_path}")
