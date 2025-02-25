@@ -98,5 +98,4 @@ def get_aircraft_co2(icao: str, day: str) -> AircraftCO2:
     ```
     """
     # TODO
-    day_to_compute = day
     return AircraftCO2(icao=icao, hours_flown=12.2, co2=1.5)

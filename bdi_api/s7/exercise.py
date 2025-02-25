@@ -22,7 +22,6 @@ def prepare_data() -> str:
 
     Use credentials passed from `db_credentials`
     """
-    user = db_credentials.username
     # TODO
 
     return "OK"

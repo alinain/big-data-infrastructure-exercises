@@ -1,15 +1,16 @@
-import os
-import requests
-from typing import Annotated
-from concurrent.futures import ThreadPoolExecutor
-import pandas as pd
-import shutil
 import json
-from fastapi import APIRouter, status, HTTPException
+import os
+import shutil
+from concurrent.futures import ThreadPoolExecutor
+from typing import Annotated
+
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+from fastapi import APIRouter, HTTPException, status
 from fastapi.params import Query
 
 from bdi_api.settings import Settings
-from bs4 import BeautifulSoup
 
 settings = Settings()
 
@@ -27,7 +28,7 @@ def download_data(
         file_limit: Annotated[
             int,
             Query(
-                ..., 
+                ...,
                 description="""
     Limits the number of files to download.
     You must always start from the first the page returns and
@@ -226,7 +227,7 @@ def get_aircraft_statistics(icao: str) -> dict:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve aircraft statistics: {str(e)}"
         )
-    
+
 def remove_gz_extension(file_name):
     if file_name.endswith(".gz"):
         return file_name[:-3]
@@ -258,7 +259,7 @@ def prep_data(directory, output_file="prepared.json", batch_size=100):
             file_path = os.path.join(directory, file_name)
 
             try:
-                with open(file_path, "r") as file:
+                with open(file_path) as file:
                     data = json.load(file)
 
                 aircraft_data = data.get("aircraft", [])

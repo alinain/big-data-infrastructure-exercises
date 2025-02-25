@@ -1,8 +1,10 @@
 import io
 import json
 import os
+
 import boto3
 import requests
+
 s3_client = boto3.client("s3")
 def remove_gz_extension(file_name):
     return file_name[:-3] if file_name.endswith(".gz") else file_name

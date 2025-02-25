@@ -1,13 +1,13 @@
-import requests
 from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
+import requests
+from botocore.exceptions import BotoCoreError, NoCredentialsError
+from bs4 import BeautifulSoup
 from fastapi import APIRouter, HTTPException, status
 from fastapi.params import Query
 
 from bdi_api.settings import Settings
-from bs4 import BeautifulSoup
-from botocore.exceptions import BotoCoreError, NoCredentialsError
 
 from .helper import delete_files_in_s3_folder, download_file, list_s3_files, process_s3_files, upload_to_s3
 
@@ -52,7 +52,7 @@ def download_data(
         if not file_links:
             return "No files found to download."
         file_links = file_links[:file_limit]
-        print(":rocket: Starting concurrent downloads and uploads...")
+        print(":rocket: Starting concurrent downloads...")
         with ThreadPoolExecutor(max_workers=10) as executor:
             executor.map(lambda link: download_file(link, base_url, s3_bucket, s3_prefix_path), file_links)
         print(":white_tick: All downloads and uploads completed.")
