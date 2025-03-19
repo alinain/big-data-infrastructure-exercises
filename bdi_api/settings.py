@@ -10,11 +10,19 @@ PROJECT_DIR = dirname(dirname(bdi_api.__file__))
 
 class DBCredentials(BaseSettings):
     """Use env variables prefixed with BDI_DB_"""
+    #PostgreSQL connection details
+    host: str = "localhost" 
+    port: int = 5432  
+    username: str = "postgres"  
+    password: str = "DieToreDerWelt"  
+    database: str = "my_database"  
 
-    host: str
-    port: int = 5432
-    username: str
-    password: str
+   # host: str
+   # port: int = 5432
+   # username: str
+   # password: str
+   # database: str 
+
     model_config = SettingsConfigDict(env_prefix="bdi_db_")
 
 
