@@ -11,11 +11,11 @@ PROJECT_DIR = dirname(dirname(bdi_api.__file__))
 class DBCredentials(BaseSettings):
     """Use env variables prefixed with BDI_DB_"""
     #PostgreSQL connection details
-    host: str = "localhost" 
+    host: str = "my-database.cxbhrx6lorso.us-east-1.rds.amazonaws.com" 
     port: int = 5432  
     username: str = "postgres"  
     password: str = "DieToreDerWelt"  
-    database: str = "my_database"  
+    database: str = "my-database"  
 
    # host: str
    # port: int = 5432
