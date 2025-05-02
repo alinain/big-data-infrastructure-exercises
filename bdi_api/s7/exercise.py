@@ -1,20 +1,18 @@
+import json
 import logging
+import os
+import threading
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+import boto3
 import psycopg2
 import psycopg2.extras
 from botocore.exceptions import BotoCoreError, NoCredentialsError
 from fastapi import APIRouter, HTTPException, status
+from tqdm import tqdm
 
 from bdi_api.settings import DBCredentials, Settings
-
-import json
-import os
-import threading
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-
-import boto3
-from tqdm import tqdm
 
 #from .s7_helper___ import list_s3_files, process_s3_files
 

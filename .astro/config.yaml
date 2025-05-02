@@ -1,0 +1,7 @@
+project:
+    name: big-data-infrastructure-exercises
+
+services:
+  postgres:
+    ports:
+      - "15432:5432"

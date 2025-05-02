@@ -1,0 +1,6 @@
+project:
+    name: airflow-dags
+services:
+    postgres:
+        ports:
+            - 15432:5432
